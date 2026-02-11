@@ -1,0 +1,9 @@
+#[export_as("call")]
+function call() {
+  
+}
+
+#[export_as("console.log")]
+function log(a) {
+  #0(a);
+}

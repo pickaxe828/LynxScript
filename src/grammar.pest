@@ -1,0 +1,94 @@
+// TODO: If statements/ expressions
+// TODO: Loops/ continue/ break
+
+program = { SOI ~ LinkStatementList ~ TopLevelMainBlock ~ EOI }
+
+LinkStatementList = { LinkStatement* }
+
+LinkStatement = { "link" ~ string_literal ~ ";" }
+
+TopLevelMainBlock = _{
+  Item*
+}
+
+Statement = _{ 
+  ExpressionStatement
+  | AssignmentStatement
+}
+
+StatementList = _{ Statement* }
+
+ExpressionStatement = { Expression ~ ";" }
+
+AssignmentStatement = { LetStatement | ReassignmentStatement }
+
+LetStatement = { "let" ~ Identifier ~ "=" ~ Expression ~ ";" }
+
+ReassignmentStatement = { Expression ~ "=" ~ Expression ~ ";" }
+
+Item = _{ Attribute | FunctionDeclaration }
+
+Attribute = { "#[" ~ #attr_name = Identifier ~ ("(" ~ #attr_content = string_literal ~ ")")? ~ "]" }
+
+FunctionDeclaration = {
+  "function" ~ (Identifier) ~ "(" ~ (Expression)? ~ ")" ~ Block
+}
+
+Block = { "{" ~ StatementList ~ "}" }
+
+// Template for pratt parsing
+Expression = { UnaryExpression* ~ PrimaryExpression ~ PostfixExpression* ~ (BinaryExpression ~ UnaryExpression* ~ PrimaryExpression ~ PostfixExpression* )* }
+
+BinaryExpression = _{ Addition | Subtraction | Multiplication | Division | Power | Dot | Comma }
+  Addition = { "+" }
+  Subtraction = { "-" }
+  Multiplication = { "*" }
+  Division = { "/" }
+  Power = { "**" }
+  Dot = { "." }
+  Comma = { "," }
+
+UnaryExpression = _{ NumeralNegation | LogicalNegation }
+  NumeralNegation = { "-" } // Unary negation
+  LogicalNegation = { "!" } // Logical negation
+
+PrimaryExpression = _{
+  ActionScriptBlockID 
+  | LiteralExpression 
+  | Identifier 
+  | "(" ~ (Expression)? ~ ")" }
+
+ActionScriptBlockID = ${ "#" ~ ASCII_DIGIT+ }
+
+Identifier = @{
+  (ASCII_ALPHA | "_")
+  ~ (ASCII_ALPHANUMERIC | "_" | ASCII_DIGIT)*
+}
+
+LiteralExpression = _{ string_literal | float_literal | number_literal | boolean_literal }
+
+PostfixExpression = _{ CallExpression }
+CallExpression = { "(" ~ (Expression)? ~ ")" }
+
+// TODO: Test if $ would break string literal parsing
+string_literal = {
+  // Single source of truth for the quote character
+  PUSH("\"") ~
+  #string_content = (!PEEK ~ ANY)*
+  ~ POP
+}
+
+number_literal = ${
+  ASCII_DIGIT+
+}
+
+float_literal = ${
+  ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+
+}
+
+boolean_literal = { true_literal | false_literal }
+true_literal = ${ "true" }
+false_literal = ${ "false" }
+
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+COMMENT = _{ "//" ~ (!NEWLINE ~ ANY)* ~ NEWLINE }
