@@ -49,19 +49,20 @@ impl CompilerState {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct LynxScriptCompiler {
+pub struct Compiler {
   syntax_tree: parser::Program,
   state: CompilerState
 }
 
-impl LynxScriptCompiler {
+impl Compiler {
   pub fn new(syntax_tree: parser::Program) -> Self {
     let mut temp = Self { syntax_tree, state: CompilerState::new() };
     temp.hoist_items();
     temp
   }
 
-  pub fn compile(self: &mut LynxScriptCompiler) -> codegen::Program {
+  // TODO: See if the implementation is correct
+  pub fn compile(self: &mut Compiler) -> codegen::Program {
     // Temporarily take the main_block out of self to avoid borrow conflict
     // This leaves an empty Vec inside self.syntax_tree.main_block temporarily
     let main_block = std::mem::take(&mut self.syntax_tree.main_block);
@@ -80,7 +81,7 @@ impl LynxScriptCompiler {
     )
   }
 
-  fn compile_item(self: &mut LynxScriptCompiler, item: &parser::Item) -> Option<codegen::Item> {
+  fn compile_item(self: &mut Compiler, item: &parser::Item) -> Option<codegen::Item> {
     match item {
       parser::Item::Attribute { name, content } => {
         self.state.add_attribute(item.clone()).unwrap();
@@ -104,7 +105,7 @@ impl LynxScriptCompiler {
     }
   }
 
-  fn compile_statement(self: &mut LynxScriptCompiler, stmt: &parser::Statement) -> codegen::Statement {
+  fn compile_statement(self: &mut Compiler, stmt: &parser::Statement) -> codegen::Statement {
     match stmt {
       // TODO: Implement link statement compilation
       parser::Statement::Expression { expr } => {
@@ -118,7 +119,7 @@ impl LynxScriptCompiler {
     }
   }
 
-  fn compile_expression(self: &mut LynxScriptCompiler, expr: &parser::Expression) -> codegen::Expression {
+  fn compile_expression(self: &mut Compiler, expr: &parser::Expression) -> codegen::Expression {
     match expr {
       parser::Expression::Literal (literal) => {
         codegen::Expression {
@@ -139,11 +140,11 @@ impl LynxScriptCompiler {
           content: Some(codegen::Variable { name: name.clone() }),
         }
       },
-      parser::Expression::ActionScriptBlockID (block_id) => {
-        unimplemented!("ActionScriptBlockID cannot be read as expressions or values.");
+      parser::Expression::CWScriptBlockID (block_id) => {
+        unimplemented!("CWScriptBlockID cannot be read as expressions or values.");
         // codegen::Expression {
         //   dependencies: Vec::new(),
-        //   content: Some(codegen::ActionScriptBlockID{ id: block_id.clone() }),
+        //   content: Some(codegen::CWScriptBlockID{ id: block_id.clone() }),
         // }
       },
       parser::Expression::Call { function, arguments } => {
@@ -177,17 +178,21 @@ impl LynxScriptCompiler {
             }
           },
           // Function call by block id (raw calls)
-          parser::Expression::ActionScriptBlockID(action_id) => 
-            codegen::Expression { dependencies: vec![
-              codegen::Call::ActionScriptBlockCall {
+          // FIXME: Argument compilation not implemented yet
+          parser::Expression::CWScriptBlockID(action_id) => {
+            codegen::Expression { 
+              dependencies: vec![
+                codegen::Call::CWScriptBlockCall {
                 dependencies: Vec::new(),
-                block_id: codegen::ActionScriptBlockID { id: action_id.to_owned() },
+                  block_id: codegen::CWScriptBlockID { id: action_id.to_owned() },
                 arguments: vec![],
                 return_var: None,
               }
             ], 
-            // No return from ActionScriptBlock
-            content: None },
+              // No return from CWScriptBlock
+              content: None
+            }
+          },
           parser::Expression::Call { .. } => unimplemented!("Function as returned value and nested calls are not supported yet."),
           others => unimplemented!("Unsupported call target in call: {:?}", others),
         }
@@ -200,7 +205,7 @@ impl LynxScriptCompiler {
             self.compile_expression(lhs).dependencies,
             self.compile_expression(rhs).dependencies,
           ].into_iter().flatten().collect(),
-          function_name: codegen::Variable { name: LynxScriptCompiler::map_bin_op(op) },
+          function_name: codegen::Variable { name: Compiler::map_bin_op(op) },
           arguments: vec![
             // FIXME: Wrong implementation: Calculation of expressions should be standalone dependencies as well
             codegen::Argument::Identifier(codegen::Variable { name: self.compile_expression(lhs).content.unwrap_or_default().name }),
@@ -252,9 +257,9 @@ impl LynxScriptCompiler {
   
   /// Generate CatWeb calls
   pub fn generate_catweb_sync_call(name: codegen::Variable, argument: Vec<codegen::Argument>) -> codegen::Call {
-    codegen::Call::ActionScriptBlockCall { 
+    codegen::Call::CWScriptBlockCall { 
       dependencies: Vec::new(),
-      block_id: codegen::ActionScriptBlockID { id: "".to_string() }, // FIXME: Change ActionBlockID to the correct block ID
+      block_id: codegen::CWScriptBlockID { id: "".to_string() }, // FIXME: Change ActionBlockID to the correct block ID
       arguments: argument,
       return_var: None, // FIXME: Handle return variable for sync calls
     }

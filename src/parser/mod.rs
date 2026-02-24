@@ -1,9 +1,11 @@
 use anyhow::{self, Error};
 
-use pest::{Parser, Span, iterators::Pairs, iterators::Pair, pratt_parser::PrattParser};
-use pest_derive::Parser;
+use pest::{Parser as _Parser, Span, iterators::Pairs, iterators::Pair, pratt_parser::PrattParser};
+use pest_derive::Parser as _Parser;
 
 mod test;
+
+// TODO: Carry source code span in the AST for better error reporting in the future.
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
@@ -50,7 +52,7 @@ pub enum Literal {
 pub enum Expression {
   // TODO: Implement other expression types
   Literal(Literal),
-  ActionScriptBlockID(String),
+  CWScriptBlockID(String),
   Identifier(String),
   BinOperation {
     lhs: Box<Expression>,
@@ -62,7 +64,7 @@ pub enum Expression {
     expr: Box<Expression>,
   },
   Call {
-    // Identifier or ActionScriptBlockID
+    // Identifier or CWScriptBlockID
     function: Box<Expression>,
     arguments: Vec<Expression>,
   },
@@ -107,21 +109,26 @@ lazy_static::lazy_static! {
   };
 }
 
-#[derive(Parser)]
+#[derive(_Parser)]
 #[grammar = "grammar.pest"] // relative to src
-pub struct LynxScriptParser;
+pub struct Parser;
 
-impl LynxScriptParser {
-  pub fn parse_rule<'a>(self: &LynxScriptParser, rule: Rule, input: &'a str) -> Result<Pairs<'a, Rule>, anyhow::Error> {
-    Ok(LynxScriptParser::parse(rule, input)?)
+impl Parser {
+  pub fn new() -> Self {
+    Parser {}
   }
 
-  pub fn parse_program_from_str(self: &LynxScriptParser, input: &str) -> Result<Program, anyhow::Error> {
+  pub fn parse_rule<'a>(self: &Parser, rule: Rule, input: &'a str) -> Result<Pairs<'a, Rule>, anyhow::Error> {
+    // Wrapper for the generated parser. We return anyhow::Error for better error handling in the future.
+    Ok(Parser::parse(rule, input)?)
+  }
+
+  pub fn parse_program_from_str(self: &mut Parser, input: &str) -> Result<Program, anyhow::Error> {
     Ok(self.parse_program(self.parse_rule(Rule::program, input)?.next().expect("Program should match once"))?)
   }
 
   // Parses the entire program. Only accept a single `program` pair.
-  pub fn parse_program(self: &LynxScriptParser, input: Pair<Rule>) -> Result<Program, anyhow::Error> {
+  pub fn parse_program(self: &mut Parser, input: Pair<Rule>) -> Result<Program, anyhow::Error> {
     let mut input_iter: Pairs<Rule> = input.into_inner();
     let program_header = input_iter.next().unwrap().into_inner().collect::<Vec<Pair<Rule>>>();
     let mut program_body = input_iter.collect::<Vec<Pair<Rule>>>();
@@ -130,20 +137,26 @@ impl LynxScriptParser {
       Program {
         // TODO: Implement link logic
         link_statements: vec![],
-        main_block: program_body.into_iter().map(|pair| self.parse_item(pair)).collect::<Result<Vec<Item>, anyhow::Error>>()?,
+        main_block: program_body.into_iter()
+          .filter_map(|pair| self.parse_item(pair).ok().flatten())
+          .collect::<Vec<Item>>(),
       }
     )
   }
 
-  fn parse_item(self: &LynxScriptParser, input: Pair<Rule>) -> Result<Item, anyhow::Error> {
+  /// Parses an item, which can be either an attribute or a function declaration.
+  /// 
+  /// - If it's an attribute, we push it to the state and return None
+  /// - If it's a function declaration, we return the parsed item
+  fn parse_item(self: &mut Parser, input: Pair<Rule>) -> Result<Option<Item>, anyhow::Error> {
     match input.as_rule() {
-      Rule::FunctionDeclaration => Ok(self.parse_function_declaration(input)?),
-      Rule::Attribute => Ok(self.parse_attribute(input)?),
+      Rule::FunctionDeclaration => Ok(Some(Item::FunctionDeclaration(self.parse_function_declaration(input)?))),
+      Rule::Attribute => Ok(Some(Item::Attribute(self.parse_attribute(input)?))),
       rule => unreachable!("Expected item, found {:?}", rule),
     }
   }
 
-  fn parse_attribute(self: &LynxScriptParser, input: Pair<Rule>) -> Result<Item, anyhow::Error> {
+  fn parse_attribute(self: &Parser, input: Pair<Rule>) -> Result<Attribute, anyhow::Error> {
     match input.as_rule() {
       Rule::Attribute => {
         let mut input_iter = input.into_inner();
@@ -153,18 +166,17 @@ impl LynxScriptParser {
         } else {
           None
         };
-        Ok(
-          Item::Attribute {
-            name: attribute_name,
-            content: attribute_content,
+        match attribute_name.as_str() {
+          "inline" => Ok(Attribute::Inline),
+          "export_as" => Ok(Attribute::ExportAs(attribute_content.unwrap_or_else(|| attribute_name))),
+          attr_str => Err(anyhow::anyhow!("Unknown attribute: {}", attr_str)),
           }
-        )
       },
       rule => unreachable!("Expected attribute, found {:?}", rule),
     }
   }
 
-  fn parse_function_declaration(self: &LynxScriptParser, input: Pair<Rule>) -> Result<Item, anyhow::Error> {
+  fn parse_function_declaration(self: &Parser, input: Pair<Rule>) -> Result<FunctionDeclaration, anyhow::Error> {
     match input.as_rule() {
       Rule::FunctionDeclaration => {
         let mut input_iter: Pairs<Rule> = input.into_inner();
@@ -194,11 +206,11 @@ impl LynxScriptParser {
     }
   }
 
-  fn parse_block(self: &LynxScriptParser, input: Pairs<Rule>) -> Vec<Statement> {
+  fn parse_block(self: &Parser, input: Pairs<Rule>) -> Vec<Statement> {
     input.map(|pair| self.parse_statement(pair)).collect()
   }
 
-  fn parse_statement(self: &LynxScriptParser, input: Pair<Rule>) -> Statement {
+  fn parse_statement(self: &Parser, input: Pair<Rule>) -> Statement {
     let statement = input;
     match statement.as_rule() {
       Rule::ExpressionStatement => {
@@ -228,10 +240,10 @@ impl LynxScriptParser {
     }
   }
 
-  fn parse_singlet(self: &LynxScriptParser, input: Pair<Rule>) -> Expression {
+  fn parse_singlet(self: &Parser, input: Pair<Rule>) -> Expression {
     match input.as_rule() {
       Rule::Expression => self.parse_expression(input),
-      Rule::ActionScriptBlockID => Expression::ActionScriptBlockID(input.as_str().to_string()),
+      Rule::CWScriptBlockID => Expression::CWScriptBlockID(input.as_str().to_string()),
       Rule::Identifier => Expression::Identifier(input.as_str().to_string()),
       Rule::string_literal => Expression::Literal(Literal::String(input.as_str().trim_matches('"').to_string())),
       Rule::float_literal => Expression::Literal(Literal::Float(input.as_str().to_string())),
@@ -241,10 +253,10 @@ impl LynxScriptParser {
     }
   }
 
-  fn parse_expression(self: &LynxScriptParser, input: Pair<Rule>) -> Expression {
+  fn parse_expression(self: &Parser, input: Pair<Rule>) -> Expression {
     PRATT_PARSER
       .map_primary(|primary| match primary.as_rule() {
-        Rule::ActionScriptBlockID => Expression::ActionScriptBlockID(primary.as_str().to_string()),
+        Rule::CWScriptBlockID => Expression::CWScriptBlockID(primary.as_str().to_string()),
         Rule::Identifier => Expression::Identifier(primary.as_str().to_string()),
         Rule::string_literal => Expression::Literal(Literal::String(primary.as_str().trim_matches('"').to_string())),
         Rule::float_literal => Expression::Literal(Literal::Float(primary.as_str().to_string())),
@@ -298,7 +310,7 @@ impl LynxScriptParser {
       .parse(input.into_inner())
   }
 
-  pub fn parse_boolean_literal(self: &LynxScriptParser, input: Pair<Rule>) -> Result<bool, anyhow::Error> {
+  pub fn parse_boolean_literal(self: &Parser, input: Pair<Rule>) -> Result<bool, anyhow::Error> {
     let pair = input.into_inner().next().unwrap();
     match pair.as_rule() {
       Rule::true_literal => Ok(true),
@@ -307,7 +319,7 @@ impl LynxScriptParser {
     }
   }
 
-  fn expand_comma_expression(self: &LynxScriptParser, input: Expression) -> Result<Vec<Expression>, anyhow::Error> {
+  fn expand_comma_expression(self: &Parser, input: Expression) -> Result<Vec<Expression>, anyhow::Error> {
     match input {
       Expression::BinOperation { lhs, op: BinOperator::Comma, rhs } => {
         let mut result = self.expand_comma_expression(*lhs)?;

@@ -53,12 +53,12 @@ UnaryExpression = _{ NumeralNegation | LogicalNegation }
   LogicalNegation = { "!" } // Logical negation
 
 PrimaryExpression = _{
-  ActionScriptBlockID 
+  CWScriptBlockID 
   | LiteralExpression 
   | Identifier 
   | "(" ~ (Expression)? ~ ")" }
 
-ActionScriptBlockID = ${ "#" ~ ASCII_DIGIT+ }
+CWScriptBlockID = ${ "#" ~ ASCII_DIGIT+ }
 
 Identifier = @{
   (ASCII_ALPHA | "_")

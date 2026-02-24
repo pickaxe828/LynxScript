@@ -28,14 +28,14 @@ pub struct Variable {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct ActionScriptBlockID {
+pub struct CWScriptBlockID {
   pub id: String
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Identifier {
   Name(Variable),
-  ActionScriptBlockID(ActionScriptBlockID),
+  CWScriptBlockID(CWScriptBlockID),
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -62,13 +62,12 @@ pub enum Call {
   FunctionCall {
     dependencies: Vec<Call>,
     function_name: Variable,
-    // TODO: Determine when to expand expressions to arguments
     arguments: Vec<Argument>,
     return_var: Option<Variable>,
   },
-  ActionScriptBlockCall {
+  CWScriptBlockCall {
     dependencies: Vec<Call>,
-    block_id: ActionScriptBlockID,
+    block_id: CWScriptBlockID,
     arguments: Vec<Argument>,
     return_var: Option<Variable>,
   }

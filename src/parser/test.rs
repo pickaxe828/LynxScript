@@ -1,13 +1,13 @@
 #[test]
 fn test_simple_function_parsing() {
-  use crate::parser::{self, LynxScriptParser};
+  use crate::parser::{self, Parser};
 
   let input = r#"
   function add(a, b) {
     #0("", "Hello, World!");
   }"#;
 
-  let syntax_tree = super::LynxScriptParser.parse_program_from_str(input).unwrap();
+  let syntax_tree = super::Parser.parse_program_from_str(input).unwrap();
 
   let expected_syntax_tree = parser::Program {
     link_statements: vec![],
@@ -21,7 +21,7 @@ fn test_simple_function_parsing() {
         body: vec![
           parser::Statement::Expression {
             expr: parser::Expression::Call {
-              function: Box::new(parser::Expression::ActionScriptBlockID("#0".to_string())),
+                function: Box::new(parser::Expression::CWScriptBlockID("#0".to_string())),
               arguments: vec![
                 parser::Expression::BinOperation {
                   lhs: Box::new(parser::Expression::Literal(parser::Literal::String("".to_string()))),
