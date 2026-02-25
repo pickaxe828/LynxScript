@@ -1,4 +1,5 @@
 // TODO: Implement stringification
+/// This module defines the lowered data structures.
 #[derive(Debug, PartialEq, Clone)]
 pub struct Program {
   pub main_block: Vec<Item>,
@@ -13,13 +14,18 @@ impl Program {
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct Expression {
   pub dependencies: Vec<Call>,
-  pub content: Option<Variable>, // FIXME: Variables only
+  pub content: Option<Argument>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Statement {
   pub dependencies: Vec<Call>,
   pub content: Vec<Call>,
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
+pub struct Literal {
+  pub value: String,
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -53,7 +59,8 @@ pub enum Item {
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum Argument {
-  Literal(String),
+  RawString(String),
+  Literal(Literal),
   Identifier(Variable),
 }
 

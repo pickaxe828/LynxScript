@@ -14,16 +14,23 @@ pub struct Program {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+/// Enum currently only has function declaration. Might contain more item types in the future.
 pub enum Item {
-  FunctionDeclaration {
-    name: String,
-    parameters: Vec<Expression>,
-    body: Vec<Statement>,
-  },
-  Attribute {
-    name: String,
-    content: Option<String>,
-  }
+  Attribute(Attribute),
+  FunctionDeclaration(FunctionDeclaration),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum Attribute {
+  Inline,
+  ExportAs(String),
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct FunctionDeclaration {
+  pub name: String,
+  pub parameters: Vec<Expression>,
+  pub body: Vec<Statement>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -45,6 +52,7 @@ pub enum Literal {
   Integer(String),
   Float(String),
   String(String),
+  RawString(String),
   Bool(bool),
 }
 
@@ -170,7 +178,7 @@ impl Parser {
           "inline" => Ok(Attribute::Inline),
           "export_as" => Ok(Attribute::ExportAs(attribute_content.unwrap_or_else(|| attribute_name))),
           attr_str => Err(anyhow::anyhow!("Unknown attribute: {}", attr_str)),
-          }
+        }
       },
       rule => unreachable!("Expected attribute, found {:?}", rule),
     }
@@ -195,7 +203,7 @@ impl Parser {
         };
 
         Ok(
-          Item::FunctionDeclaration {
+          FunctionDeclaration {
             name: function_name,
             parameters: expanded_parameters,
             body: parsed_body,
@@ -243,9 +251,17 @@ impl Parser {
   fn parse_singlet(self: &Parser, input: Pair<Rule>) -> Expression {
     match input.as_rule() {
       Rule::Expression => self.parse_expression(input),
-      Rule::CWScriptBlockID => Expression::CWScriptBlockID(input.as_str().to_string()),
+      Rule::CWScriptBlockID => Expression::CWScriptBlockID(input.as_str().strip_prefix("#").expect("Expected # prefix before numerals for raw ID calls").to_string()),
       Rule::Identifier => Expression::Identifier(input.as_str().to_string()),
-      Rule::string_literal => Expression::Literal(Literal::String(input.as_str().trim_matches('"').to_string())),
+      Rule::raw_string_literal => Expression::Literal(Literal::RawString(input.as_str()
+        .strip_prefix("#").expect("Expected # prefix before raw string literal")
+        .strip_prefix('"').expect("Expected quotation around raw string literal")
+        .strip_suffix('"').expect("Expected quotation around raw string literal")
+        .to_string())),
+      Rule::string_literal => Expression::Literal(Literal::String(input.as_str()
+        .strip_prefix('"').expect("Expected quotation around string literal")
+        .strip_suffix('"').expect("Expected quotation around string literal")
+        .to_string())),
       Rule::float_literal => Expression::Literal(Literal::Float(input.as_str().to_string())),
       Rule::number_literal => Expression::Literal(Literal::Integer(input.as_str().to_string())),
       Rule::boolean_literal => Expression::Literal(Literal::Bool(self.parse_boolean_literal(input).unwrap())),
@@ -255,16 +271,7 @@ impl Parser {
 
   fn parse_expression(self: &Parser, input: Pair<Rule>) -> Expression {
     PRATT_PARSER
-      .map_primary(|primary| match primary.as_rule() {
-        Rule::CWScriptBlockID => Expression::CWScriptBlockID(primary.as_str().to_string()),
-        Rule::Identifier => Expression::Identifier(primary.as_str().to_string()),
-        Rule::string_literal => Expression::Literal(Literal::String(primary.as_str().trim_matches('"').to_string())),
-        Rule::float_literal => Expression::Literal(Literal::Float(primary.as_str().to_string())),
-        Rule::number_literal => Expression::Literal(Literal::Integer(primary.as_str().to_string())),
-        Rule::boolean_literal => Expression::Literal(Literal::Bool(self.parse_boolean_literal(primary).unwrap())),
-        Rule::Expression => self.parse_expression(primary),
-        rule => unreachable!("Expected expressions, found {:?}", rule)
-      })
+      .map_primary(|primary| self.parse_singlet(primary))
       .map_infix(|lhs, op, rhs| {
         let op = match op.as_rule() {
           Rule::Addition => BinOperator::Addition,
@@ -300,7 +307,7 @@ impl Parser {
             Expression::Call {
               function: Box::new(expr), 
               arguments: if postfix_inner_iter.len() > 0 {
-                postfix_inner_iter.map(|arg_pair| self.parse_expression(arg_pair)).collect::<Vec<Expression>>() 
+                postfix_inner_iter.map(|arg_pair| self.expand_comma_expression(self.parse_expression(arg_pair)).unwrap()).flatten().collect::<Vec<Expression>>() 
               } else { vec![] }
             }
           },

@@ -65,12 +65,19 @@ Identifier = @{
   ~ (ASCII_ALPHANUMERIC | "_" | ASCII_DIGIT)*
 }
 
-LiteralExpression = _{ string_literal | float_literal | number_literal | boolean_literal }
+LiteralExpression = _{ raw_string_literal | string_literal | float_literal | number_literal | boolean_literal }
 
 PostfixExpression = _{ CallExpression }
 CallExpression = { "(" ~ (Expression)? ~ ")" }
 
-// TODO: Test if $ would break string literal parsing
+raw_string_literal = {
+  "#" ~
+  // Single source of truth for the quote character
+  PUSH("\"") ~
+  #string_content = (!PEEK ~ ANY)*
+  ~ POP
+}
+
 string_literal = {
   // Single source of truth for the quote character
   PUSH("\"") ~

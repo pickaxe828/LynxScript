@@ -3,6 +3,7 @@ use std::vec;
 use crate::parser;
 use crate::codegen;
 use crate::parser::BinOperator;
+use crate::parser::Item;
 
 use anyhow;
 use regex_macro::{regex};
@@ -25,29 +26,34 @@ impl CompilerState {
     }
   }
 
-  pub fn add_attribute(&mut self, attribute: parser::Item) -> Result<(), anyhow::Error> {
+  pub fn add_attribute(&mut self, attribute: &parser::Attribute) -> Result<(), anyhow::Error> {
     match attribute {
-      parser::Item::Attribute { name, content } => {
-        match name.as_str() {
-          "inline" => {self.attributes.push(Attribute::Inline); Ok(())},
-          "export_as" => {
-            if let Some(content_str) = content {
-              self.attributes.push(Attribute::ExportAs(content_str));
-              Ok(())
-            } else {
-              Err(anyhow::anyhow!("Attribute \"export_as\" requires a content string"))
-            }
-          },
-          attr_str => {
-            Err(anyhow::anyhow!("Unknown attribute: {}", attr_str))
-          }
-        }
+      parser::Attribute::Inline => {
+        self.attributes.push(Attribute::Inline);
+        return Ok(())
+      },
+      parser::Attribute::ExportAs(content_str) => {
+        self.attributes.push(Attribute::ExportAs(content_str.clone()));
+        return Ok(())
+      },
+      _ => {
+        return Err(anyhow::anyhow!("Attribute \"export_as\" requires a content string"))
       }
-      attr => unimplemented!("Unsupported item type {:?} in add_attribute", attr)
     }
+  }
+
+  pub fn pop_all_attributes(&mut self) -> Vec<Attribute> {
+    std::mem::take(&mut self.attributes)
   }
 }
 
+/// Compiler module: 
+/// 
+/// Transforms the parsed syntax tree into an intermediate representation (IR) suitable for code generation. 
+/// 
+/// This includes tasks such as:
+/// - Expanding expressions and statements into CatWeb equivalent structures (calls/ control flow structures)
+/// - Inlining functions marked with the `inline` attribute
 #[derive(Debug, PartialEq, Clone)]
 pub struct Compiler {
   syntax_tree: parser::Program,
@@ -57,7 +63,8 @@ pub struct Compiler {
 impl Compiler {
   pub fn new(syntax_tree: parser::Program) -> Self {
     let mut temp = Self { syntax_tree, state: CompilerState::new() };
-    temp.hoist_items();
+    // FIXME: Hoisting is unnecessary in CatWeb
+    // temp.hoist_items();
     temp
   }
 
@@ -68,33 +75,45 @@ impl Compiler {
     let main_block = std::mem::take(&mut self.syntax_tree.main_block);
 
     // Compilation logic goes here
-    let compiled_items: Vec<Option<codegen::Item>> = 
-      main_block.iter().map(|item| -> Option<codegen::Item> {
-        self.compile_item(item)
-      }).collect::<Vec<Option<codegen::Item>>>();
+    let compiled_items: Vec<codegen::Item> = main_block.iter().filter_map(|item| {
+      self.compile_item(item)
+    }).collect();
 
-    // Restore the main_block
+    // Restore the main block
     self.syntax_tree.main_block = main_block;
 
-    codegen::Program::new(
-      compiled_items.into_iter().filter_map(|item| item).collect::<Vec<codegen::Item>>()
-    )
+    codegen::Program::new(compiled_items)
   }
 
   fn compile_item(self: &mut Compiler, item: &parser::Item) -> Option<codegen::Item> {
     match item {
-      parser::Item::Attribute { name, content } => {
-        self.state.add_attribute(item.clone()).unwrap();
+      parser::Item::Attribute(attr) => {
+        self.state.add_attribute(attr).unwrap();
         None
       },
-      parser::Item::FunctionDeclaration { name, parameters, body } => {
+      parser::Item::FunctionDeclaration(func) => {
         // Compile function declaration
+
+        let attributes = self.state.pop_all_attributes();
+
+        // FIXME: Implement function inlining
+        let inlining: bool = attributes.iter().any(|attr| matches!(attr, Attribute::Inline));
+
+        // FIXME: Implement function renaming on symbol table
+
+        let export_as: Option<String> = attributes.iter().find_map(|attr| match attr {
+          Attribute::ExportAs(name) => {
+            Some(name.clone())
+          },
+          _ => None,
+        });
+
         Some(codegen::Item::FunctionDeclaration {
           // TODO: Register function in symbol table
-          name: name.clone(),
-          body: body.iter().map(|stmt| self.compile_statement(stmt)).collect::<Vec<codegen::Statement>>(),
+          name: export_as.unwrap_or_else(|| func.name.clone()),
+          body: func.body.iter().map(|stmt| self.compile_statement(stmt)).collect::<Vec<codegen::Statement>>(),
           // TODO: SYMBOL TABLE?
-          parameters: parameters.into_iter().map(|param| {
+          parameters: func.parameters.iter().map(|param| {
             match param {
               parser::Expression::Identifier(iden) => codegen::Variable { name: iden.clone() },
               _ => unimplemented!("Unsupported parameter type in function declaration: {:?}", param),
@@ -114,30 +133,39 @@ impl Compiler {
           content: Vec::new(),
         }
       },
-      parser::Statement::Assignment { lhs, rhs } => todo!(""),
+      parser::Statement::Assignment { lhs, rhs } => todo!("Assignment statement compilation to be implemented: {:?} = {:?}", lhs, rhs),
       parser::Statement::Link { path } => todo!("Linking CatWeb JSON to object identifiers to be implemented: {}", path),
     }
   }
 
   fn compile_expression(self: &mut Compiler, expr: &parser::Expression) -> codegen::Expression {
+    // Compile the expression based on it's type
     match expr {
       parser::Expression::Literal (literal) => {
+
+        let content = match literal {
+          parser::Literal::Bool(bool) 
+          => codegen::Argument::Literal(
+            codegen::Literal { value: bool.to_string() }
+          ),
+          parser::Literal::Float(inner_string)
+          | parser::Literal::Integer(inner_string)
+          | parser::Literal::String(inner_string)
+          => codegen::Argument::Literal(
+            codegen::Literal { value: inner_string.to_owned() }
+          ),
+          parser::Literal::RawString(inner_string) => codegen::Argument::RawString(inner_string.to_owned()),
+        };
         codegen::Expression {
           dependencies: Vec::new(),
-          content: Some( codegen::Variable { name: match literal {
-            parser::Literal::Bool(bool) => bool.to_string(),
-            parser::Literal::Float(inner_string)
-            | parser::Literal::Integer(inner_string)
-            | parser::Literal::String(inner_string) 
-            => inner_string.to_owned(),
-          }}),
+          content: Some(content),
         }
       },
       parser::Expression::Identifier (name) => {
         // TODO: Lookup identifier in symbol table
         codegen::Expression { 
           dependencies: Vec::new(),
-          content: Some(codegen::Variable { name: name.clone() }),
+          content: Some(codegen::Argument::Identifier(codegen::Variable { name: name.clone() })),
         }
       },
       parser::Expression::CWScriptBlockID (block_id) => {
@@ -147,69 +175,25 @@ impl Compiler {
         //   content: Some(codegen::CWScriptBlockID{ id: block_id.clone() }),
         // }
       },
-      parser::Expression::Call { function, arguments } => {
-        // FIXME: Handle function inlining
-        match &**function {
-          // Function call by name
-          parser::Expression::Identifier(iden) => {
-            // Use fold to accumulate directly into single vectors
-            let (arg_dependencies, arg_contents) = arguments.iter().fold(
-                (Vec::new(), Vec::new()), 
-                |(mut deps, mut conts), arg| -> (Vec<codegen::Call>, Vec<codegen::Argument>) {
-                    let expr = self.compile_expression(arg);
-                    deps.extend(expr.dependencies);
-                    conts.push(codegen::Argument::Identifier(codegen::Variable { name: expr.content.unwrap_or_default().name }));
-                    (deps, conts)
-                }
-            );
-            
-            codegen::Expression {
-              dependencies: vec![
-                codegen::Call::FunctionCall {
-                  dependencies: arg_dependencies,
-                  function_name: codegen::Variable { name: iden.clone() },
-                  arguments: arg_contents,
-                  // FIXME: Return variable handling
-                  return_var: None,
-                }
-              ], 
-              // FIXME: Return values from function calls is not implemented yet
-              content: None
-            }
-          },
-          // Function call by block id (raw calls)
-          // FIXME: Argument compilation not implemented yet
-          parser::Expression::CWScriptBlockID(action_id) => {
-            codegen::Expression { 
-              dependencies: vec![
-                codegen::Call::CWScriptBlockCall {
-                dependencies: Vec::new(),
-                  block_id: codegen::CWScriptBlockID { id: action_id.to_owned() },
-                arguments: vec![],
-                return_var: None,
-              }
-            ], 
-              // No return from CWScriptBlock
-              content: None
-            }
-          },
-          parser::Expression::Call { .. } => unimplemented!("Function as returned value and nested calls are not supported yet."),
-          others => unimplemented!("Unsupported call target in call: {:?}", others),
-        }
-      },
+      parser::Expression::Call { function, arguments } => self.compile_call(function, arguments),
       parser::Expression::BinOperation { lhs, op, rhs } => {
         // TODO: Operator overloading?
+        let lhs_compiled = self.compile_expression(lhs);
+        let rhs_compiled = self.compile_expression(rhs);
+
+        let lhs_as_arg = lhs_compiled.content.expect("Binary operation expected LHS argument"); 
+        let rhs_as_arg = rhs_compiled.content.expect("Binary operation expected RHS argument");
         // Generate the call
         let call = codegen::Call::FunctionCall {
           dependencies: vec![
-            self.compile_expression(lhs).dependencies,
-            self.compile_expression(rhs).dependencies,
+            lhs_compiled.dependencies,
+            rhs_compiled.dependencies,
           ].into_iter().flatten().collect(),
           function_name: codegen::Variable { name: Compiler::map_bin_op(op) },
           arguments: vec![
             // FIXME: Wrong implementation: Calculation of expressions should be standalone dependencies as well
-            codegen::Argument::Identifier(codegen::Variable { name: self.compile_expression(lhs).content.unwrap_or_default().name }),
-            codegen::Argument::Identifier(codegen::Variable { name: self.compile_expression(rhs).content.unwrap_or_default().name }),
+            lhs_as_arg,
+            rhs_as_arg,
           ],
           return_var: None, // FIXME: Match return variable
         };
@@ -217,11 +201,66 @@ impl Compiler {
         // Wrap it in an expression
         codegen::Expression {
           dependencies: vec![call],
+          // FIXME: Binary operations compilation unimplemented, calculated contents are not passed as variable
           content: None, // FIXME: Match return variable
         }
       },
       
       parser::Expression::UnaryOperation { op, expr } => todo!()
+    }
+  }
+
+  pub fn compile_call(&mut self, function: &parser::Expression, arguments: &Vec<parser::Expression>) -> codegen::Expression {
+    // Compile arguments of the call first
+    let (dependencies, arguments): (Vec<Vec<codegen::Call>>, Vec<codegen::Argument>) = arguments.iter()
+      .map(|arg| {
+        let dep_expr = self.compile_expression(arg);
+        let dep_var = dep_expr.content.expect("Expected argument value");
+        (
+          dep_expr.dependencies, 
+          dep_var
+        )
+      }
+    ).unzip();
+    
+    // Match cases based on type of the function call
+    match &*function {
+      // Normal function calls
+    // FIXME: Handle function inlining
+      parser::Expression::Identifier(iden) => {
+        codegen::Expression {
+          dependencies: vec![
+            codegen::Call::FunctionCall {
+              dependencies: dependencies.into_iter().flatten().collect(),
+              function_name: codegen::Variable { name: iden.clone() },
+              arguments: arguments,
+              // FIXME: Return variable handling
+              return_var: None,
+            }
+          ],
+          // FIXME: Return values from function calls is not implemented yet
+          content: None
+        }
+      },
+
+      // Function call by block id (raw calls)
+      // FIXME: Argument compilation not implemented yet
+      parser::Expression::CWScriptBlockID(action_id) => {
+        codegen::Expression {
+          dependencies: vec![
+            codegen::Call::CWScriptBlockCall {
+              dependencies: dependencies.into_iter().flatten().collect(),
+              block_id: codegen::CWScriptBlockID { id: action_id.to_owned() },
+              arguments: arguments,
+              return_var: None,
+            }
+          ], 
+          // FIXME: Return values from raw calls not implemented yet
+          content: None
+        }
+      },
+      parser::Expression::Call { .. } => unimplemented!("Function as return value and chained calls are not supported yet."),
+      others => unimplemented!("Unsupported call target in call: {:?}", others),
     }
   }
 
@@ -233,8 +272,9 @@ impl Compiler {
       &BinOperator::Multiplication => "mul".to_string(),
       &BinOperator::Division => "div".to_string(),
       &BinOperator::Power => "pow".to_string(),
-      &BinOperator::Dot => panic!("Dot cannot be mapped to call signature"),
-      &BinOperator::Comma => panic!("Comma cannot be mapped to call signature"),
+      // &BinOperator::Dot => panic!("Dot cannot be mapped to call signature"),
+      // &BinOperator::Comma => panic!("Comma cannot be mapped to call signature"),
+      op_rest => panic!("Binary operator {:?} cannot be mapped to call signature", op_rest),
     }
   }
   
