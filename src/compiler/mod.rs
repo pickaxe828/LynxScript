@@ -8,6 +8,8 @@ use crate::parser::Item;
 use anyhow;
 use regex_macro::{regex};
 
+mod test;
+
 #[derive(Debug, PartialEq, Clone)]
 pub enum Attribute {
   Inline,
