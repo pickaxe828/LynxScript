@@ -43,7 +43,13 @@ lync -c ./src/main.lxs
   - [ ] Dead code elimination
 
 ## Installation
-TODO
+1. Install Rust and Cargo from [the official Rust website](https://rust-lang.org/)
+2. Clone the repository
+3. Go to the project directory and install the CLI tool with the following command:
+```bash
+cargo install --path .
+```
+4. You can now use the `lync` command in your terminal to compile LynxScript files!
 
 ## Development
 ### Prerequisites
