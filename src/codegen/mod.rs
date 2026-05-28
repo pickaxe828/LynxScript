@@ -5,10 +5,8 @@ use serde_json::Result;
 
 pub mod json;
 pub mod structures;
-pub mod symbol_table;
 
 pub use structures::*;
-pub use symbol_table::*;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct CWBlockScriptGenerator {}
@@ -91,7 +89,7 @@ impl CWBlockScriptGenerator {
               ..Default::default()     // TODO: Check if key "l" are crucial for import
             }),
             Argument::Identifier(var) => json::TextFieldValue::Parameter( json::Parameter { 
-              value: var.name,
+              value: format!("{{l!{}}}", var.name), // FIXME: Referencing global variables not implemented
               t: "string".to_string(), // TODO: Check if "string" is the correct value for key "t"
               ..Default::default()     // TODO: Check if key "l" are crucial for import
             }),

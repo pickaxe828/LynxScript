@@ -1,0 +1,43 @@
+---
+source: src/compiler/test.rs
+expression: structure_res
+---
+Program {
+    main_block: [
+        FunctionDeclaration {
+            name: "c",
+            parameters: [
+                Variable {
+                    name: "a",
+                },
+                Variable {
+                    name: "b",
+                },
+            ],
+            body: [
+                Statement {
+                    dependencies: [
+                        CWScriptBlockCall {
+                            dependencies: [],
+                            block_id: CWScriptBlockID {
+                                id: "0",
+                            },
+                            arguments: [
+                                RawString(
+                                    "",
+                                ),
+                                Literal(
+                                    Literal {
+                                        value: "Hello, World!",
+                                    },
+                                ),
+                            ],
+                            return_var: None,
+                        },
+                    ],
+                    content: [],
+                },
+            ],
+        },
+    ],
+}

@@ -1,12 +1,16 @@
 use std::vec;
 
-use crate::parser;
 use crate::codegen;
+use crate::parser;
 use crate::parser::BinOperator;
 use crate::parser::Item;
 
 use anyhow;
 use regex_macro::{regex};
+
+use self::symbol_table::{SymbolTable, SymbolType};
+
+pub mod symbol_table;
 
 mod test;
 
@@ -37,9 +41,6 @@ impl CompilerState {
       parser::Attribute::ExportAs(content_str) => {
         self.attributes.push(Attribute::ExportAs(content_str.clone()));
         return Ok(())
-      },
-      _ => {
-        return Err(anyhow::anyhow!("Attribute \"export_as\" requires a content string"))
       }
     }
   }
@@ -59,12 +60,21 @@ impl CompilerState {
 #[derive(Debug, PartialEq, Clone)]
 pub struct Compiler {
   syntax_tree: parser::Program,
-  state: CompilerState
+  state: CompilerState,
+  symbol_table: SymbolTable,
+  scope_stack: Vec<symbol_table::ScopeId>,
 }
 
 impl Compiler {
   pub fn new(syntax_tree: parser::Program) -> Self {
-    let mut temp = Self { syntax_tree, state: CompilerState::new() };
+    let mut temp = Self {
+      syntax_tree,
+      state: CompilerState::new(),
+      symbol_table: SymbolTable::new(),
+      scope_stack: Vec::new(),
+    };
+    let root_scope = temp.symbol_table.root_scope();
+    temp.scope_stack.push(root_scope);
     // FIXME: Hoisting is unnecessary in CatWeb
     // temp.hoist_items();
     temp
@@ -75,6 +85,9 @@ impl Compiler {
     // Temporarily take the main_block out of self to avoid borrow conflict
     // This leaves an empty Vec inside self.syntax_tree.main_block temporarily
     let main_block = std::mem::take(&mut self.syntax_tree.main_block);
+
+    self.register_function_symbols(&main_block)
+      .expect("Function symbol registration should succeed");
 
     // Compilation logic goes here
     let compiled_items: Vec<codegen::Item> = main_block.iter().filter_map(|item| {
@@ -110,17 +123,46 @@ impl Compiler {
           _ => None,
         });
 
-        Some(codegen::Item::FunctionDeclaration {
-          // TODO: Register function in symbol table
-          name: export_as.unwrap_or_else(|| func.name.clone()),
-          body: func.body.iter().map(|stmt| self.compile_statement(stmt)).collect::<Vec<codegen::Statement>>(),
-          // TODO: SYMBOL TABLE?
-          parameters: func.parameters.iter().map(|param| {
-            match param {
-              parser::Expression::Identifier(iden) => codegen::Variable { name: iden.clone() },
-              _ => unimplemented!("Unsupported parameter type in function declaration: {:?}", param),
+        let function_name = export_as.unwrap_or_else(|| func.name.clone());
+        let current_scope = self.current_scope();
+        let function_unique_name = self
+          .symbol_table
+          .find_in_scope(current_scope, &function_name)
+          .expect("Function should be registered before compilation")
+          .unique_name
+          .clone();
+
+        let function_scope = self.symbol_table.enter_scope(current_scope);
+        self.scope_stack.push(function_scope);
+
+        let mut parameters = Vec::with_capacity(func.parameters.len());
+        for param in &func.parameters {
+          match param {
+            parser::Expression::Identifier(iden) => {
+              let symbol = self
+                .symbol_table
+                .add_symbol(self.current_scope(), iden, SymbolType::Variable)
+                .expect("Parameter symbols should be valid");
+              parameters.push(codegen::Variable { name: symbol.unique_name });
             }
-          }).collect::<Vec<codegen::Variable>>(),
+            _ => unimplemented!("Unsupported parameter type in function declaration: {:?}", param),
+          }
+        }
+
+        let mut body = Vec::with_capacity(func.body.len());
+        for stmt in &func.body {
+          body.push(self.compile_statement(stmt));
+        }
+
+        let function_scope = self.scope_stack.pop().expect("Function scope should be on stack");
+        self.symbol_table
+          .exit_scope(function_scope)
+          .expect("Exiting function scope should succeed");
+
+        Some(codegen::Item::FunctionDeclaration {
+          name: function_unique_name,
+          body,
+          parameters,
         })
       }
     }
@@ -165,9 +207,13 @@ impl Compiler {
       },
       parser::Expression::Identifier (name) => {
         // TODO: Lookup identifier in symbol table
+        let symbol = self
+          .symbol_table
+          .resolve(self.current_scope(), name)
+          .expect("Undefined identifier");
         codegen::Expression { 
           dependencies: Vec::new(),
-          content: Some(codegen::Argument::Identifier(codegen::Variable { name: name.clone() })),
+          content: Some(codegen::Argument::Identifier(codegen::Variable { name: symbol.unique_name.clone() })),
         }
       },
       parser::Expression::CWScriptBlockID (block_id) => {
@@ -230,11 +276,15 @@ impl Compiler {
       // Normal function calls
     // FIXME: Handle function inlining
       parser::Expression::Identifier(iden) => {
+        let symbol = self
+          .symbol_table
+          .resolve(self.current_scope(), iden)
+          .expect("Undefined function identifier");
         codegen::Expression {
           dependencies: vec![
             codegen::Call::FunctionCall {
               dependencies: dependencies.into_iter().flatten().collect(),
-              function_name: codegen::Variable { name: iden.clone() },
+              function_name: codegen::Variable { name: symbol.unique_name.clone() },
               arguments: arguments,
               // FIXME: Return variable handling
               return_var: None,
@@ -246,7 +296,6 @@ impl Compiler {
       },
 
       // Function call by block id (raw calls)
-      // FIXME: Argument compilation not implemented yet
       parser::Expression::CWScriptBlockID(action_id) => {
         codegen::Expression {
           dependencies: vec![
@@ -264,6 +313,33 @@ impl Compiler {
       parser::Expression::Call { .. } => unimplemented!("Function as return value and chained calls are not supported yet."),
       others => unimplemented!("Unsupported call target in call: {:?}", others),
     }
+  }
+
+  fn register_function_symbols(&mut self, items: &[parser::Item]) -> Result<(), anyhow::Error> {
+    let mut prepass_state = CompilerState::new();
+    let root_scope = self.current_scope();
+    for item in items {
+      match item {
+        parser::Item::Attribute(attr) => {
+          prepass_state.add_attribute(attr)?;
+        }
+        parser::Item::FunctionDeclaration(func) => {
+          let attributes = prepass_state.pop_all_attributes();
+          let export_as = attributes.iter().find_map(|attr| match attr {
+            Attribute::ExportAs(name) => Some(name.clone()),
+            _ => None,
+          });
+          let function_name = export_as.unwrap_or_else(|| func.name.clone());
+          self.symbol_table
+            .add_symbol(root_scope, &function_name, SymbolType::Function)?;
+        }
+      }
+    }
+    Ok(())
+  }
+
+  fn current_scope(&self) -> symbol_table::ScopeId {
+    *self.scope_stack.last().expect("Scope stack should not be empty")
   }
 
   /// Returns call signature string for given binary operator

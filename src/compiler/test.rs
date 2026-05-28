@@ -1,76 +1,61 @@
-#[test]
-fn test_simple_function_compiling() {
-  use crate::{codegen::structures, parser};
+#[cfg(test)]
 
-  let input = parser::Program {
-    link_statements: vec![],
-    main_block: vec![
-      parser::Item::FunctionDeclaration(
-        parser::FunctionDeclaration {         
-          name: "add".to_string(),
-          parameters: vec![
-            parser::Expression::Identifier("a".to_string()),
-            parser::Expression::Identifier("b".to_string()),
-          ],
-          body: vec![
-            parser::Statement::Expression {
-              expr: parser::Expression::Call {
-                function: Box::new(parser::Expression::CWScriptBlockID("0".to_string())),
-                arguments: vec![
-                  parser::Expression::Literal(parser::Literal::String("".to_string())),
-                  parser::Expression::Literal(parser::Literal::String("Hello, World!".to_string())),
-                ]
-              }
-            }
-          ] 
-        }
-      )
-    ]
-  };
+mod compiler_tests {
+  use insta::assert_debug_snapshot;
+  use crate::{parser::Parser, compiler::Compiler, compiler::symbol_table};
 
-  let mut compiler = super::Compiler::new(input);
-  
-  let structure_res = compiler.compile();
+  #[test]
+  fn test_simple_function_compiling() {
+    let input = r#"
+    #[export_as("c")]
+    function add(a, b) {
+      #0(#"", "Hello, World!");
+    }"#;
 
-  let expected_structure = structures::Program {
-    main_block: vec![
-      structures::Item::FunctionDeclaration {
-        name: "add".to_string(),
-        parameters: vec![
-          structures::Variable {
-            name: "a".to_string(),
-          },
-          structures::Variable {
-            name: "b".to_string(),
-          },
-        ],
-        body: vec![
-          structures::Statement {
-            dependencies: vec![
-              structures::Call::CWScriptBlockCall {
-                dependencies: vec![],
-                block_id: structures::CWScriptBlockID {
-                  id: "0".to_string(),
-                },
-                arguments: vec![
-                  structures::Argument::RawString(
-                    "".to_string()
-                  ),
-                  structures::Argument::Literal(
-                    structures::Literal {
-                      value: "Hello, World!".to_string(),
-                    },
-                  ),
-                    ],
-                    return_var: None,
-                  },
-                ],
-                content: vec![],
-              },
-          ],
-      },
-  ],
-};
+    let syntax_tree = Parser.parse_program_from_str(input).unwrap();
 
-  assert_eq!(expected_structure, structure_res);
+    let mut compiler = Compiler::new(syntax_tree);
+    let structure_res = compiler.compile();
+
+    assert_debug_snapshot!(structure_res);
+  }
+
+  #[test]
+  fn test_symbol_table_shadowing_mangles() {
+    use symbol_table::{SymbolTable, SymbolType};
+
+    let mut table = SymbolTable::new();
+    let root_scope = table.root_scope();
+    let outer = table
+      .add_symbol(root_scope, "x", SymbolType::Variable)
+      .expect("Outer symbol should be added");
+
+    let child_scope = table.enter_scope(root_scope);
+    let inner = table
+      .add_symbol(child_scope, "x", SymbolType::Variable)
+      .expect("Inner symbol should be added");
+
+    assert_eq!(outer.original_name, "x");
+    assert_eq!(outer.unique_name, "x");
+    assert_ne!(inner.unique_name, "x");
+
+    let resolved = table
+      .resolve(child_scope, "x")
+      .expect("Inner shadowed symbol should resolve");
+    assert_eq!(resolved.unique_name, inner.unique_name);
+  }
+
+  #[test]
+  fn test_symbol_table_duplicate_in_scope_errors() {
+    use symbol_table::{SymbolTable, SymbolType};
+
+    let mut table = SymbolTable::new();
+    let root_scope = table.root_scope();
+    table
+      .add_symbol(root_scope, "x", SymbolType::Variable)
+      .expect("First symbol should be added");
+
+    let duplicate = table.add_symbol(root_scope, "x", SymbolType::Variable);
+    assert!(duplicate.is_err());
+  }
 }
