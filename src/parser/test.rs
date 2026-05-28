@@ -1,45 +1,19 @@
-#[test]
-fn test_simple_function_parsing() {
-  use crate::parser::{self};
+#[cfg(test)]
 
-  let input = r#"
-  #[export_as("c")]
-  function add(a, b) {
-    #0(#"", "Hello, World!");
-  }"#;
+mod parser_tests {
+  use insta::assert_debug_snapshot;
+  use crate::parser::Parser;
 
-  let syntax_tree = super::Parser.parse_program_from_str(input).unwrap();
+  #[test]
+  fn test_simple_function_parsing() {
+    let input = r#"
+    #[export_as("c")]
+    function add(a, b) {
+      #0(#"", "Hello, World!");
+    }"#;
 
-  dbg!(syntax_tree.clone());
+    let syntax_tree = Parser.parse_program_from_str(input).unwrap();
 
-  let expected_syntax_tree = parser::Program {
-    link_statements: vec![],
-    main_block: vec![
-      parser::Item::Attribute(
-        parser::Attribute::ExportAs("add".to_string())
-      ),
-      parser::Item::FunctionDeclaration(
-        parser::FunctionDeclaration {         
-          name: "add".to_string(),
-          parameters: vec![
-            parser::Expression::Identifier("a".to_string()),
-            parser::Expression::Identifier("b".to_string()),
-          ],
-          body: vec![
-            parser::Statement::Expression {
-              expr: parser::Expression::Call {
-                function: Box::new(parser::Expression::CWScriptBlockID("0".to_string())),
-                arguments: vec![
-                  parser::Expression::Literal(parser::Literal::RawString("".to_string())),
-                  parser::Expression::Literal(parser::Literal::String("Hello, World!".to_string())),
-                ]
-              }
-            }
-          ] 
-        }
-      )
-    ]
-  };
-
-  assert_eq!(expected_syntax_tree, syntax_tree);
+    assert_debug_snapshot!(syntax_tree);
+  }
 }

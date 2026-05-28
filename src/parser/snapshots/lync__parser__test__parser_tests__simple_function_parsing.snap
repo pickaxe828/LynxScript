@@ -1,0 +1,48 @@
+---
+source: src/parser/test.rs
+expression: syntax_tree
+---
+Program {
+    link_statements: [],
+    main_block: [
+        Attribute(
+            ExportAs(
+                "c",
+            ),
+        ),
+        FunctionDeclaration(
+            FunctionDeclaration {
+                name: "add",
+                parameters: [
+                    Identifier(
+                        "a",
+                    ),
+                    Identifier(
+                        "b",
+                    ),
+                ],
+                body: [
+                    Expression {
+                        expr: Call {
+                            function: CWScriptBlockID(
+                                "0",
+                            ),
+                            arguments: [
+                                Literal(
+                                    RawString(
+                                        "",
+                                    ),
+                                ),
+                                Literal(
+                                    String(
+                                        "Hello, World!",
+                                    ),
+                                ),
+                            ],
+                        },
+                    },
+                ],
+            },
+        ),
+    ],
+}
