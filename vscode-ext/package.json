@@ -1,0 +1,39 @@
+{
+  "name": "lynxscript",
+  "displayName": "LynxScript",
+  "description": "LynxScript language support",
+  "version": "0.0.1",
+  "publisher": "Pickaxe828",
+  "repository": {
+    "url": "https://github.com/pickaxe828/LynxScript"
+  },
+  "engines": {
+    "vscode": "^1.110.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [{
+      "id": "lynxscript",
+      "aliases": ["LynxScript", "lynxscript"],
+      "extensions": [".lxs"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "lynxscript",
+      "scopeName": "source.lxs",
+      "path": "./syntaxes/lynxscript.tmLanguage.json"
+    }],
+    "configurationDefaults": {
+      "editor.tokenColorCustomizations": {
+        "textMateRules": [{
+          "scope": "meta.attribute.lynxscript",
+          "settings": {
+            "foreground": "#D19A66"
+          }
+        }]
+      }
+    }
+  }
+}
